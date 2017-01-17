@@ -44,7 +44,7 @@ getDockerfile.with{
         description('Dockerhub username and password. Please make sure the credentials are added with ID "docker-credentials"')
     }
     stringParam("IMAGE_REPO",dockerfileGitUrl,"Repository location of your Dockerfile")
-    stringParam("IMAGE_TAG",'tomcat8',"Enter a unique string to tag your images (Note: Upper case chararacters are not allowed)")
+    stringParam("IMAGE_TAG",'tomcat8',"Enter a unique string to tag your images (Note: Upper case chararacters are not allowed) e.g. johnsmith/dockerimage or if pushing to aws aws_account_id.dkr.ecr.region.amazonaws.com/my-web-app ")
     stringParam("CLAIR_DB",'',"URI for the Clair PostgreSQL database in the format postgresql://postgres:password@postgres:5432?sslmode=disable (ignore parameter as it is currently unsupported)")
   }
   wrappers {
@@ -210,7 +210,7 @@ dockerBuild.with{
     }
 		shell('''set -x
       |echo "Building the docker image locally..."
-      |docker build -t ${DOCKERHUB_USERNAME}/${IMAGE_TAG}:${B} ${WORKSPACE}/.
+      |docker build -t ${IMAGE_TAG}:${B} ${WORKSPACE}/.
       |
       |echo LOGIN=$(echo ${DOCKER_LOGIN}) > credential.properties
       |set +x'''.stripMargin())
@@ -347,7 +347,7 @@ imageTest.with{
             |# Set path workspace is available from inside docker machine
             |export docker_workspace_dir=$(echo ${WORKSPACE} | sed 's#/workspace#/var/lib/docker/volumes/jenkins_slave_home/_data#')
             |
-            |docker run --net=host --rm -v ${docker_workspace_dir}/${TESTS_PATH}/:${TEST_DIR} -v /var/run/docker.sock:/var/run/docker.sock darrenajackson/image-inspector -i  ${DOCKERHUB_USERNAME}/${IMAGE_TAG}:${B} -f ${TEST_DIR}/image.cfg > ${WORKSPACE}/${JOB_NAME##*/}.out
+            |docker run --net=host --rm -v ${docker_workspace_dir}/${TESTS_PATH}/:${TEST_DIR} -v /var/run/docker.sock:/var/run/docker.sock darrenajackson/image-inspector -i  ${IMAGE_TAG}:${B} -f ${TEST_DIR}/image.cfg > ${WORKSPACE}/${JOB_NAME##*/}.out
             |
             |if grep "ERROR" ${WORKSPACE}/${JOB_NAME##*/}.out; then
             | echo "Your built image has failed testing..."
@@ -425,6 +425,7 @@ containerTest.with{
             |
             |# Test image name extension
             |export IMG_EXT="test"
+            |export IMAGE_NAME="${IMAGE_TAG///}"
             |
             |# Test image tag
             |export IMG_TAG=${B}
@@ -441,7 +442,7 @@ containerTest.with{
             |# Create test Dockerfile
             |if ! [[ -f ${TEST_DF} ]]; then
             |  cat << EOF > ${TEST_DF}
-            |FROM  ${DOCKERHUB_USERNAME}/${IMAGE_TAG}:${B}
+            |FROM  ${IMAGE_TAG}:${B}
             |
             |RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y ${PACK_LIST} && apt-get clean && rm -rf /var/lib/apt/lists/*
             |
@@ -457,17 +458,17 @@ containerTest.with{
             |docker build -t ${IMAGE_TAG}-${IMG_EXT}:${IMG_TAG} -f ${TEST_DF} ${TEST_DF_PATH}
             |
             |# Run the test image
-            |docker run -d --name ${IMAGE_TAG}-${IMG_EXT} -v ${docker_workspace_dir}/${TESTS_PATH}/:${TEST_DIR} ${IMAGE_TAG}-${IMG_EXT}:${IMG_TAG}
+            |docker run -d --name ${IMAGE_NAME}-${IMG_EXT} -v ${docker_workspace_dir}/${TESTS_PATH}/:${TEST_DIR} ${IMAGE_TAG}-${IMG_EXT}:${IMG_TAG}
             |
             |# Allow the container time to start
             |sleep 60
             |
             |# Execute the testing scripts
-            |docker exec ${IMAGE_TAG}-${IMG_EXT} chmod -R +x ${TEST_DIR}
-            |docker exec ${IMAGE_TAG}-${IMG_EXT} ${TEST_DIR}/container_tests.sh ${TEST_DIR} > ${WORKSPACE}/${JOB_NAME##*/}.out
+            |docker exec ${IMAGE_NAME}-${IMG_EXT} chmod -R +x ${TEST_DIR}
+            |docker exec ${IMAGE_NAME}-${IMG_EXT} ${TEST_DIR}/container_tests.sh ${TEST_DIR} > ${WORKSPACE}/${JOB_NAME##*/}.out
             |
             |# Stop and clean up the testing container and testing image
-            |docker stop ${IMAGE_TAG}-${IMG_EXT} && docker rm -v ${IMAGE_TAG}-${IMG_EXT} && docker rmi ${IMAGE_TAG}-${IMG_EXT}:${IMG_TAG}
+            |docker stop ${IMAGE_NAME}-${IMG_EXT} && docker rm -v ${IMAGE_NAME}-${IMG_EXT} && docker rmi ${IMAGE_TAG}-${IMG_EXT}:${IMG_TAG}
             |
             |if grep "^-" ${WORKSPACE}/${JOB_NAME##*/}.out; then
             | echo "Note: some warnings/errors found..."
@@ -530,8 +531,18 @@ dockerPush.with{
   label("docker")
   steps {
     shell('''set +x
-      |docker login -u ${DOCKERHUB_USERNAME} -p ${DOCKERHUB_PASSWORD} -e devops@adop.com
-      |docker push ${DOCKERHUB_USERNAME}/${IMAGE_TAG}:${B}
+      |if [[ ${IMAGE_TAG} == *"amazonaws.com"* ]]; then
+      | export AWS_ACCESS_KEY_ID=${DOCKERHUB_USERNAME}
+      | export AWS_SECRET_ACCESS_KEY=${DOCKERHUB_PASSWORD}
+      | export AWS_DEFAULT_REGION="${IMAGE_TAG#*.*.*.}"
+      | export AWS_DEFAULT_REGION="${AWS_DEFAULT_REGION%%.*}"
+      | ECR_DOCKER_LOGIN=`aws ecr get-login`
+      | ${ECR_DOCKER_LOGIN}
+      |else
+      | docker login -u ${DOCKERHUB_USERNAME} -p ${DOCKERHUB_PASSWORD} -e devops@adop.com
+      |fi
+      |
+      |docker push ${IMAGE_TAG}:${B}
       |
       |echo LOGIN=$(echo ${DOCKER_LOGIN}) > credential.properties
       |set -x'''.stripMargin())
@@ -582,8 +593,20 @@ dockerDeploy.with{
   label("docker")
   steps {
     shell('''set +x
-      |docker login -u ${DOCKERHUB_USERNAME} -p ${DOCKERHUB_PASSWORD} -e devops@adop.com
-      |docker run -d --name jenkins_${IMAGE_TAG}_${B} ${DOCKERHUB_USERNAME}/${IMAGE_TAG}:${B}
+      |if [[ ${IMAGE_TAG} == *"amazonaws.com"* ]]; then
+      | export AWS_ACCESS_KEY_ID=${DOCKERHUB_USERNAME}
+      | export AWS_SECRET_ACCESS_KEY=${DOCKERHUB_PASSWORD}
+      | export AWS_DEFAULT_REGION="${IMAGE_TAG#*.*.*.}"
+      | export AWS_DEFAULT_REGION="${AWS_DEFAULT_REGION%%.*}"
+      | ECR_DOCKER_LOGIN=`aws ecr get-login`
+      | ${ECR_DOCKER_LOGIN}
+      |else
+      | docker login -u ${DOCKERHUB_USERNAME} -p ${DOCKERHUB_PASSWORD} -e devops@adop.com
+      |fi
+      |
+      |export IMAGE_NAME="${IMAGE_TAG///}"
+      |
+      |docker run -d --name jenkins_${IMAGE_NAME}_${B} ${IMAGE_TAG}:${B}
       |
       |set -x'''.stripMargin())
   }
@@ -622,9 +645,11 @@ dockerCleanup.with{
       |# Checking to see whether to delete all containers or just one
       |if [ ${CONTAINER_DELETION} = "SINGLE" ]; then
       |  echo "Deleting single container..."
-      |  docker rm -f jenkins_${IMAGE_TAG}_${B}
+      |  export IMAGE_NAME="${IMAGE_TAG///}"
+      |  docker rm -f jenkins_${IMAGE_NAME}_${B}
       |elif [ ${CONTAINER_DELETION} = "ALL" ]; then
       |   echo "Deleting all containers..."
+      |   export IMAGE_NAME="${IMAGE_TAG///}"
       |   for i in `seq 1 ${B}`;
       |     do
       |      if docker ps -a | grep "jenkins_${IMAGE_TAG}_${i}"; then
