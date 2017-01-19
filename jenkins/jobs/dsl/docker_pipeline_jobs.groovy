@@ -346,9 +346,11 @@ bddSecurityTest.with{
             |export docker_workspace_dir=$(echo ${WORKSPACE} | sed 's#/workspace#/var/lib/docker/volumes/jenkins_slave_home/_data#')
             |docker run --rm \\
             |-v ${docker_workspace_dir}/Dockerfile:/dockerdir/Dockerfile \\
+            |-v ${docker_workspace_dir}/:/dockerdir/output \\
             |-v /var/run/docker.sock:/var/run/docker.sock \\
             |-w /dockerdir \\
-            |luismsousa/docker-security-test rake
+            |luismsousa/docker-security-test rake \\
+            |CUCUMBER_OPTS='features --format json --guess -o /dockerdir/output/cubumber.json'
             |docker rm --force $(docker ps -a -q --filter 'name=container-to-delete')
             |'''.stripMargin())
   }
