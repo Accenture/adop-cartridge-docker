@@ -1,3 +1,4 @@
+
 // Folders
 def workspaceFolderName = "${WORKSPACE_NAME}"
 def projectFolderName = "${PROJECT_NAME}"
@@ -10,10 +11,8 @@ def dockerfileGitUrl = "ssh://jenkins@gerrit:29418/${PROJECT_NAME}/" + dockerfil
 def getDockerfile = freeStyleJob(projectFolderName + "/Get_Dockerfile")
 def staticCodeAnalysis = freeStyleJob(projectFolderName + "/Static_Code_Analysis")
 def dockerBuild = freeStyleJob(projectFolderName + "/Image_Build")
-def vulnerabilityScan = freeStyleJob(projectFolderName + "/Vulnerability_Scan")
-def imageTest = freeStyleJob(projectFolderName + "/Image_Test")
-def bddSecurityTest = freeStyleJob(projectFolderName + "/BDD_Security_Test")
 def containerTest = freeStyleJob(projectFolderName + "/Container_Test")
+def vulnerabilityScan = freeStyleJob(projectFolderName + "/Vulnerability_Scan")
 def dockerPush = freeStyleJob(projectFolderName + "/Image_Push")
 def dockerDeploy = freeStyleJob(projectFolderName + "/Container_Deploy")
 def dockerCleanup = freeStyleJob(projectFolderName + "/Container_Cleanup")
@@ -74,12 +73,13 @@ getDockerfile.with{
     }
   }
   steps {
-    shell('''set +x
+    shell('''set -e
+            |set +x
             |echo "Pull the Dockerfile out of Git, ready for us to test and if successful, release via the pipeline."
             |
             |# Convert tag name to lowercase letters if any uppercase letters are present since they are not allowed by Docker
             |
-            |set -x'''.stripMargin())
+            |'''.stripMargin())
   }
   publishers{
     archiveArtifacts("**/*")
@@ -122,7 +122,8 @@ staticCodeAnalysis.with{
           buildNumber('${B}')
       }
     }
-    shell('''set +x
+    shell('''set -e
+            |set +x
             |echo "Mount the Dockerfile into a container that will run Dockerlint: https://github.com/RedCoolBeans/dockerlint"
             |docker run --rm -v jenkins_slave_home:/jenkins_slave_home/ --entrypoint="dockerlint" redcoolbeans/dockerlint -f /jenkins_slave_home/$JOB_NAME/Dockerfile > ${WORKSPACE}/${JOB_NAME##*/}.out
             |
@@ -134,7 +135,7 @@ staticCodeAnalysis.with{
             | cat ${WORKSPACE}/${JOB_NAME##*/}.out
             |fi
             |
-            |set -x'''.stripMargin())
+            |'''.stripMargin())
   }
   publishers{
     archiveArtifacts("**/*")
@@ -177,15 +178,15 @@ dockerBuild.with{
                 buildNumber('${B}')
             }
         }
-        shell('''set -x
+        shell('''set -xe
                 |echo "Building the docker image locally..."
                 |docker build -t ${IMAGE_TAG}:${B} ${WORKSPACE}/.
-                |
-                |set +x'''.stripMargin())
+                |docker inspect ${IMAGE_TAG}:${B}
+                |'''.stripMargin())
 	}
 	publishers{
 		downstreamParameterized{
-		  trigger(projectFolderName + "/Vulnerability_Scan"){
+		  trigger(projectFolderName + "/Container_Test"){
   		    condition("UNSTABLE_OR_BETTER")
   		    parameters{
   		      predefinedProp("B",'${B}')
@@ -198,125 +199,7 @@ dockerBuild.with{
 	}
 }
 
-vulnerabilityScan.with{
-  description("This job tests the image against a database of known vulnerabilities using Clair, an open source static analysis tool https://github.com/coreos/clair. It assumes that Clair has access to the image being tested.  If CLAIR_DB is undefined the step does nothing.")
-  parameters{
-    stringParam("B",'',"Parent build number")
-    stringParam("PARENT_BUILD","Get_Dockerfile","Parent build name")
-    stringParam("IMAGE_TAG",'',"Enter a unique string to tag your images e.g. your enterprise ID (Note: Upper case chararacters are not allowed)")
-    stringParam("CLAIR_DB",'',"URI for the Clair PostgreSQL database in the format postgresql://postgres:password@postgres:5432?sslmode=disable")
-  }
-  wrappers {
-    preBuildCleanup()
-    injectPasswords()
-    maskPasswords()
-    sshAgent("adop-jenkins-master")
-  }
-  environmentVariables {
-      env('WORKSPACE_NAME',workspaceFolderName)
-      env('PROJECT_NAME',projectFolderName)
-  }
-  label("docker")
-  steps {
-    copyArtifacts("Get_Dockerfile") {
-        buildSelector {
-          buildNumber('${B}')
-      }
-    }
-    shell('''set +x
-            |echo "THIS STEP NEEDS TO BE UPDATED ONCE ACCESS TO A PRODUCTION CLAIR DATABASE IS AVAILABLE"
-            |
-            |if [ -z ${CLAIR_DB} ]; then
-            | echo "WARNING: You have not provided the endpoints for a Clair database, moving on for now..."
-            |else
-            | # Set up Clair as a docker container
-            | echo "Clair database endpoint: ${CLAIR_DB}"
-            | mkdir /tmp/clair_config
-            | curl -L https://raw.githubusercontent.com/coreos/clair/master/config.example.yaml -o /tmp/clair_config/config.yaml
-            | # Add the URI for your postgres database
-            | sed -i'' -e "s|options: |options: ${CLAIR_DB}|g" /tmp/clair_config/config.yaml
-            | docker run -d -p 6060-6061:6060-6061 -v /tmp/clair_config:/config quay.io/coreos/clair -config=/config/config.yaml
-            | # INSERT STEPS HERE TO RUN VULNERABILITY ANALYSIS ON IMAGE USING CLAIR API
-            |fi
-            |
-            |set -x'''.stripMargin())
-  }
-  publishers{
-    downstreamParameterized{
-      trigger(projectFolderName + "/Image_Test"){
-        condition("UNSTABLE_OR_BETTER")
-        parameters{
-          predefinedProp("B",'${B}')
-          predefinedProp("PARENT_BUILD", '${PARENT_BUILD}')
-          predefinedProp("IMAGE_TAG",'${IMAGE_TAG}')
-        }
-      }
-    }
-  }
-}
-
-imageTest.with{
-  description("This job uses a python script to analyse the output from docker inspect against a configuration file that details required parameters. It also looks for any unexpected additions to the new image being tested. The configuration file must live under tests/image-test inside the images repository.")
-  parameters{
-    stringParam("B",'',"Parent build number")
-    stringParam("PARENT_BUILD","Get_Dockerfile","Parent build name")
-    stringParam("IMAGE_TAG",'',"Enter a unique string to tag your images e.g. your enterprise ID (Note: Upper case chararacters are not allowed)")
-  }
-  wrappers {
-    preBuildCleanup()
-    injectPasswords()
-    maskPasswords()
-    sshAgent("adop-jenkins-master")
-  }
-  environmentVariables {
-      env('WORKSPACE_NAME',workspaceFolderName)
-      env('PROJECT_NAME',projectFolderName)
-  }
-  label("docker")
-  steps {
-    copyArtifacts("Get_Dockerfile") {
-      buildSelector {
-          buildNumber('${B}')
-      }
-    }
-    shell('''set -x
-            |echo "Use the darrenajackson/image-inspector container to inspect the image"
-            |# Set test file directory
-            |export TESTS_PATH="tests/image-test"
-            |
-            |# Set directory where $TESTS_PATH will be mounted inside container
-            |export TEST_DIR="/tmp"
-            |
-            |# Set path workspace is available from inside docker machine
-            |export docker_workspace_dir=$(echo ${WORKSPACE} | sed 's#/workspace#/var/lib/docker/volumes/jenkins_slave_home/_data#')
-            |IMAGE_TAG=$(echo "$IMAGE_TAG" | awk '{print tolower($0)}')
-            |docker run --net=host --rm -v ${docker_workspace_dir}/${TESTS_PATH}/:${TEST_DIR} -v /var/run/docker.sock:/var/run/docker.sock darrenajackson/image-inspector -i ${IMAGE_TAG}:${B} -f ${TEST_DIR}/image.cfg > ${WORKSPACE}/${JOB_NAME##*/}.out
-            |
-            |if grep "ERROR" ${WORKSPACE}/${JOB_NAME##*/}.out; then
-            | echo "Your built image has failed testing..."
-            | cat ${WORKSPACE}/${JOB_NAME##*/}.out
-            | exit 1
-            |else
-            | cat ${WORKSPACE}/${JOB_NAME##*/}.out
-            |fi
-            |
-            |set +x'''.stripMargin())
-  }
-  publishers{
-    downstreamParameterized{
-      trigger(projectFolderName + "/BDD_Security_Test"){
-        condition("UNSTABLE_OR_BETTER")
-        parameters{
-          predefinedProp("B",'${B}')
-          predefinedProp("PARENT_BUILD", '${PARENT_BUILD}')
-          predefinedProp("IMAGE_TAG",'${IMAGE_TAG}')
-        }
-      }
-    }
-  }
-}
-
-bddSecurityTest.with{
+containerTest.with{
   description("This job uses a docker-security-test a reusable container security testing tool that is designed to look for common security errors which have been defined using a BDD approach.")
   parameters{
     stringParam("B",'',"Parent build number")
@@ -372,7 +255,7 @@ bddSecurityTest.with{
 
   publishers{
     downstreamParameterized{
-      trigger(projectFolderName + "/Container_Test"){
+      trigger(projectFolderName + "/Vulnerability_Scan"){
         condition("UNSTABLE_OR_BETTER")
         parameters{
           predefinedProp("B",'${B}')
@@ -384,12 +267,13 @@ bddSecurityTest.with{
   }
 }
 
-containerTest.with{
-  description("This job creates a new testing image from the image being tested that also contains all the tools necessary for internal testing of the image. A series of tests are then run from inside the new container. The tests can be written in any fashion you wish, however they must be initiated from a file called container_tests.sh that lives inside tests/container-test in the images repository.")
+vulnerabilityScan.with{
+  description("This job tests the image against a database of known vulnerabilities using Clair, an open source static analysis tool https://github.com/coreos/clair. It assumes that Clair has access to the image being tested.  If CLAIR_DB is undefined the step does nothing.")
   parameters{
     stringParam("B",'',"Parent build number")
     stringParam("PARENT_BUILD","Get_Dockerfile","Parent build name")
     stringParam("IMAGE_TAG",'',"Enter a unique string to tag your images e.g. your enterprise ID (Note: Upper case chararacters are not allowed)")
+    stringParam("CLAIR_DB",'',"URI for the Clair PostgreSQL database in the format postgresql://postgres:password@postgres:5432?sslmode=disable")
   }
   wrappers {
     preBuildCleanup()
@@ -404,83 +288,28 @@ containerTest.with{
   label("docker")
   steps {
     copyArtifacts("Get_Dockerfile") {
-      buildSelector {
+        buildSelector {
           buildNumber('${B}')
       }
     }
-    shell('''set -x
-            |echo "Building a new test image installing required applications, running test suite and destroying the new image and container at the end of the tests..."
-            |IMAGE_TAG=$(echo "$IMAGE_TAG" | awk '{print tolower($0)}')
-            |# Set test file directory
-            |export TESTS_PATH="tests/container-test"
+    shell('''set -e
+            |set +x
+            |echo "THIS STEP NEEDS TO BE UPDATED ONCE ACCESS TO A PRODUCTION CLAIR DATABASE IS AVAILABLE"
             |
-            |# Set testing docker file info
-            |export TEST_DF_PATH="${WORKSPACE}/${TESTS_PATH}/dockerfile"
-            |export TEST_DF_NAME="Dockerfile.test"
-            |export TEST_DF="${TEST_DF_PATH}/${TEST_DF_NAME}"
-            |
-            |# Set file containing list of environment variables
-            |export TEST_ENVS="${WORKSPACE}/${TESTS_PATH}/envs/envs.cfg"
-            |
-            |# Test image name extension
-            |export IMG_EXT="test"
-            |
-            |# Test image tag
-            |export IMG_TAG=${B}
-            |
-            |# Set directory where $TESTS_PATH will be mounted inside container
-            |export TEST_DIR="/var/tmp"
-            |
-            |# Set path workspace is available from inside docker machine
-            |export docker_workspace_dir=$(echo ${WORKSPACE} | sed 's#/workspace#/var/lib/docker/volumes/jenkins_slave_home/_data#')
-            |
-            |# Source environment variables needed for test dockerfile generation
-            |source ${WORKSPACE}/${TESTS_PATH}/dockerfile/dockerfile_envs.sh
-            |
-            |# Create test Dockerfile
-            |if ! [[ -f ${TEST_DF} ]]; then
-            |  cat << EOF > ${TEST_DF}
-            |FROM  ${IMAGE_TAG}:${B}
-            |
-            |RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y ${PACK_LIST} && apt-get clean && rm -rf /var/lib/apt/lists/*
-            |
-            |EOF
-            |fi
-            |
-            |# If the environment variable file exists add them to the dockerfile
-            |if [[ -f ${TEST_ENVS} ]]; then
-            |  cat ${TEST_ENVS} >> ${TEST_DF}
-            |fi
-            |
-            |# Build the test images
-            |docker build -t ${IMAGE_TAG}-${IMG_EXT}:${IMG_TAG} -f ${TEST_DF} ${TEST_DF_PATH}
-            |
-            |# Run the test image
-            |docker run -d --name ${IMAGE_TAG}-${IMG_EXT} -v ${docker_workspace_dir}/${TESTS_PATH}/:${TEST_DIR} ${IMAGE_TAG}-${IMG_EXT}:${IMG_TAG}
-            |
-            |# Allow the container time to start
-            |sleep 60
-            |
-            |# Execute the testing scripts
-            |docker exec ${IMAGE_TAG}-${IMG_EXT} chmod -R +x ${TEST_DIR}
-            |docker exec ${IMAGE_TAG}-${IMG_EXT} ${TEST_DIR}/container_tests.sh ${TEST_DIR} > ${WORKSPACE}/${JOB_NAME##*/}.out
-            |
-            |# Stop and clean up the testing container and testing image
-            |docker stop ${IMAGE_TAG}-${IMG_EXT} && docker rm -v ${IMAGE_TAG}-${IMG_EXT} && docker rmi ${IMAGE_TAG}-${IMG_EXT}:${IMG_TAG}
-            |
-            |if grep "^-" ${WORKSPACE}/${JOB_NAME##*/}.out; then
-            | echo "Note: some warnings/errors found..."
-            | if grep -E "expected port closed|expected process incorrect owner|expected process incorrect owner" ${WORKSPACE}/${JOB_NAME##*/}.out; then
-            |   echo "Your container has failed testing..."
-            |   exit 1
-            | fi
-            | echo "Some unexpected ports/processes found, moving on for now..."
+            |if [ -z ${CLAIR_DB} ]; then
+            | echo "WARNING: You have not provided the endpoints for a Clair database, moving on for now..."
             |else
-            | cat ${WORKSPACE}/${JOB_NAME##*/}.out
-            | echo "Container has successfully passed testing..."
+            | # Set up Clair as a docker container
+            | echo "Clair database endpoint: ${CLAIR_DB}"
+            | mkdir /tmp/clair_config
+            | curl -L https://raw.githubusercontent.com/coreos/clair/master/config.example.yaml -o /tmp/clair_config/config.yaml
+            | # Add the URI for your postgres database
+            | sed -i'' -e "s|options: |options: ${CLAIR_DB}|g" /tmp/clair_config/config.yaml
+            | docker run -d -p 6060-6061:6060-6061 -v /tmp/clair_config:/config quay.io/coreos/clair -config=/config/config.yaml
+            | # INSERT STEPS HERE TO RUN VULNERABILITY ANALYSIS ON IMAGE USING CLAIR API
             |fi
             |
-            |set -x'''.stripMargin())
+            |'''.stripMargin())
   }
   publishers{
     downstreamParameterized{
@@ -523,13 +352,14 @@ dockerPush.with{
   }
   label("docker")
   steps {
-    shell('''set +x
+    shell('''set -e
+            |set +x
             |IMAGE_TAG=$(echo "$IMAGE_TAG" | awk '{print tolower($0)}')
             |docker tag ${IMAGE_TAG}:${B} ${DOCKERHUB_USERNAME}/${IMAGE_TAG}:${B}
             |docker login -u ${DOCKERHUB_USERNAME} -p ${DOCKERHUB_PASSWORD} -e devops@adop.com
             |docker push ${DOCKERHUB_USERNAME}/${IMAGE_TAG}:${B}
             |
-            |set -x'''.stripMargin())
+            |'''.stripMargin())
   }
   publishers{
     downstreamParameterized{
@@ -572,12 +402,13 @@ dockerDeploy.with{
   }
   label("docker")
   steps {
-    shell('''set +x
+    shell('''set -e
+            |set +x
             |IMAGE_TAG=$(echo "$IMAGE_TAG" | awk '{print tolower($0)}')           
             |docker login -u ${DOCKERHUB_USERNAME} -p ${DOCKERHUB_PASSWORD} -e devops@adop.com
             |docker run -d --name jenkins_${IMAGE_TAG}_${B} ${DOCKERHUB_USERNAME}/${IMAGE_TAG}:${B}
             |
-            |set -x'''.stripMargin())
+            |'''.stripMargin())
   }
   publishers{
     buildPipelineTrigger(projectFolderName + "/Container_Cleanup") {
@@ -610,7 +441,8 @@ dockerCleanup.with{
   }
   label("docker")
   steps {
-    shell('''set +x
+    shell('''set -e
+            |set +x
             |IMAGE_TAG=$(echo "$IMAGE_TAG" | awk '{print tolower($0)}')
             |# Checking to see whether to delete all containers or just one
             |if [ ${CONTAINER_DELETION} = "SINGLE" ]; then
@@ -625,6 +457,6 @@ dockerCleanup.with{
             |        fi
             |     done
             |fi
-            |set -x'''.stripMargin())
+            |'''.stripMargin())
   }
 }
