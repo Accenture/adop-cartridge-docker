@@ -1,11 +1,15 @@
 
 // Folders
 def workspaceFolderName = "${WORKSPACE_NAME}"
-def projectFolderName = "${PROJECT_NAME}"
+def projectFolderName = "${PROJECT_NAME}/${DOCKER_IMAGE_TAG}"
 
-// Variables
-def dockerfileGitRepo = "adop-cartridge-docker-reference"
-def dockerfileGitUrl = "ssh://jenkins@gerrit:29418/${PROJECT_NAME}/" + dockerfileGitRepo
+def dockerFileImageRepoName = "${SCM_REPO_NAME}"
+def dockerFileGitUrl = "${SCM_REPO}"
+def dockerImageTag = "${DOCKER_IMAGE_TAG}"
+def dockerRegistryEndpoint = "${DOCKER_REGISTRY_ENDPOINT}"
+def dockerRegistryCredentials = "${DOCKER_REGISTRY_CREDENTIALS}"
+
+def folder = folder(projectFolderName)
 
 // Jobs
 def getDockerfile = freeStyleJob(projectFolderName + "/Get_Dockerfile")
@@ -18,10 +22,10 @@ def dockerDeploy = freeStyleJob(projectFolderName + "/Container_Deploy")
 def dockerCleanup = freeStyleJob(projectFolderName + "/Container_Cleanup")
 
 // Views
-def pipelineView = buildPipelineView(projectFolderName + "/Sample_Docker_CI")
+def pipelineView = buildPipelineView(projectFolderName + '/' + dockerImageTag + '_Docker_CI')
 
 pipelineView.with{
-  title('Sample Docker Pipeline')
+  title(dockerImageTag + ' Docker Pipeline')
   displayedBuilds(4)
   selectedJob(projectFolderName + "/Get_Dockerfile")
   showPipelineParameters()
@@ -35,15 +39,14 @@ pipelineView.with{
 // A default set of wrappers have been used for each job
 
 getDockerfile.with{
-  description("This job clones the specified local repository which contains the Dockerfile (and local resources).  It is the start of a pipeline that performs various testing stages.  The pipeline leads to a job called 'Image Push' that attempts to push to DockerHub.com.  For this to succeeed by default the job looks for a Jenkins credential called 'dockerhub-credentials'.  Only if that parameter is set and valid will the push to Dockehub.com succeed.  The subsequent 'Container Deploy' job also requires the same credentials.")
+  description("This job clones the specified local repository which contains the Dockerfile (and local resources).  It is the start of a pipeline that performs various testing stages. The pipeline leads to a job called 'Image Push' that attempts to push to configured Docker registry.  For this to succeeed by default the job looks for a Jenkins credential.  Only if that parameter is set and valid will the push to the docker registry succeed.  The subsequent 'Container Deploy' job also requires the same credentials.")
   parameters{
-    stringParam("IMAGE_REPO",dockerfileGitUrl,"Repository location of your Dockerfile")
-    stringParam("IMAGE_TAG",'tomcat8',"Enter a unique string to tag your images (Note: Upper case chararacters are not allowed)")
+    stringParam("IMAGE_REPO",dockerFileGitUrl,"Repository location of your Dockerfile")
+    stringParam("IMAGE_TAG",dockerImageTag,"Enter a unique string to tag your images (Note: Upper case chararacters are not allowed)")
     stringParam("CLAIR_DB",'',"URI for the Clair PostgreSQL database in the format postgresql://postgres:password@postgres:5432?sslmode=disable (ignore parameter as it is currently unsupported)")
   }
   wrappers {
     preBuildCleanup()
-    injectPasswords()
     maskPasswords()
     sshAgent("adop-jenkins-master")
   }
@@ -66,7 +69,7 @@ getDockerfile.with{
       events {
         refUpdated()
       }
-      project(projectFolderName + '/' + dockerfileGitRepo, 'plain:master')
+      project(projectFolderName + '/' + dockerFileImageRepoName, 'plain:master')
       configure { node ->
         node / serverName("ADOP Gerrit")
       }
@@ -111,7 +114,6 @@ staticCodeAnalysis.with{
   }
   wrappers {
     preBuildCleanup()
-    injectPasswords()
     maskPasswords()
     sshAgent("adop-jenkins-master")
   }
@@ -168,7 +170,6 @@ dockerBuild.with{
     label("docker")
     wrappers {
         preBuildCleanup()
-        injectPasswords()
         maskPasswords()
         sshAgent("adop-jenkins-master")
     }
@@ -180,7 +181,7 @@ dockerBuild.with{
         }
         shell('''set -xe
                 |echo "Building the docker image locally..."
-                |docker build -t ${IMAGE_TAG}:${B} ${WORKSPACE}/.
+                |docker build --no-cache -t ${IMAGE_TAG}:${B} ${WORKSPACE}/.
                 |docker inspect ${IMAGE_TAG}:${B}
                 |'''.stripMargin())
 	}
@@ -208,7 +209,6 @@ containerTest.with{
   }
   wrappers {
     preBuildCleanup()
-    injectPasswords()
     maskPasswords()
     sshAgent("adop-jenkins-master")
   }
@@ -277,7 +277,6 @@ vulnerabilityScan.with{
   }
   wrappers {
     preBuildCleanup()
-    injectPasswords()
     maskPasswords()
     sshAgent("adop-jenkins-master")
   }
@@ -326,20 +325,19 @@ vulnerabilityScan.with{
 }
 
 dockerPush.with{
-  description("This job pushes the fully tested Docker image to Dockerhub.com.")
+  description("This job pushes the fully tested Docker image to the configured Docker registry.")
   parameters{
     stringParam("B",'',"Parent build number")
     stringParam("PARENT_BUILD","Docker_Build","Parent build name")
     stringParam("IMAGE_TAG",'',"Enter a unique string to tag your images e.g. your enterprise ID (Note: Upper case chararacters are not allowed)")
     credentialsParam("DOCKER_LOGIN"){
         type('com.cloudbees.plugins.credentials.impl.UsernamePasswordCredentialsImpl')
-        defaultValue('dockerhub-credentials')
-        description('Dockerhub username and password. Please make sure the credentials are added with ID "dockerhub-credentials"')
+        defaultValue(dockerRegistryCredentials)
+        description('Dockerhub username and password.')
     }
   }
   wrappers {
     preBuildCleanup()
-    injectPasswords()
     maskPasswords()
     sshAgent("adop-jenkins-master")
     credentialsBinding {
@@ -376,24 +374,24 @@ dockerPush.with{
 }
 
 dockerDeploy.with{
-  description("This job pulls the Image back from Dockerhub.com and attempts to run it.")
+  description("This job pulls the Image back from the configured Docker registry and attempts to run it.")
   parameters{
     stringParam("B",'',"Parent build number")
     stringParam("PARENT_BUILD","Docker_Build","Parent build name")
     stringParam("IMAGE_TAG",'',"Enter a unique string to tag your images e.g. your enterprise ID (Note: Upper case chararacters are not allowed)")
+    stringParam("DOCKER_REGISTRY_ENDPOINT", dockerRegistryEndpoint, "The Docker registry endpoint.")
     credentialsParam("DOCKER_LOGIN"){
         type('com.cloudbees.plugins.credentials.impl.UsernamePasswordCredentialsImpl')
-        defaultValue('dockerhub-credentials')
-        description('Dockerhub username and password. Please make sure the credentials are added with ID "dockerhub-credentials"')
+        defaultValue(dockerRegistryCredentials)
+        description('Dockerhub username and password.')
     }
   }
   wrappers {
     preBuildCleanup()
-    injectPasswords()
     maskPasswords()
     sshAgent("adop-jenkins-master")
     credentialsBinding {
-        usernamePassword("DOCKERHUB_USERNAME", "DOCKERHUB_PASSWORD", '${DOCKER_LOGIN}')
+        usernamePassword("DOCKER_REGISTRY_USERNAME", "DOCKER_REGISTRY_PASSWORD", '${DOCKER_LOGIN}')
     }
   }
   environmentVariables {
@@ -405,8 +403,8 @@ dockerDeploy.with{
     shell('''set -e
             |set +x
             |IMAGE_TAG=$(echo "$IMAGE_TAG" | awk '{print tolower($0)}')           
-            |docker login -u ${DOCKERHUB_USERNAME} -p ${DOCKERHUB_PASSWORD} -e devops@adop.com
-            |docker run -d --name jenkins_${IMAGE_TAG}_${B} ${DOCKERHUB_USERNAME}/${IMAGE_TAG}:${B}
+            |docker login -u ${DOCKER_REGISTRY_USERNAME} -p ${DOCKER_REGISTRY_PASSWORD} -e devops@adop.com ${DOCKER_REGISTRY_ENDPOINT}
+            |docker run -d --name jenkins_${IMAGE_TAG}_${B} ${DOCKER_REGISTRY_USERNAME}/${IMAGE_TAG}:${B}
             |
             |'''.stripMargin())
   }
@@ -426,12 +424,11 @@ dockerCleanup.with{
   parameters{
     stringParam("B",'',"Parent build number")
     stringParam("PARENT_BUILD","Docker_Build","Parent build name")
-    stringParam("IMAGE_TAG",'tomcat8',"Enter the string value which you entered to tag your images (Note: Upper case chararacters are not allowed)")
+    stringParam("IMAGE_TAG",dockerImageTag,"Enter the string value which you entered to tag your images (Note: Upper case chararacters are not allowed)")
     choiceParam('CONTAINER_DELETION', ['SINGLE', 'ALL'], 'Choose whether to delete the container created by this run of the pipeline or all the containers created by each run of the pipeline.')
   }
   wrappers {
     preBuildCleanup()
-    injectPasswords()
     maskPasswords()
     sshAgent("adop-jenkins-master")
   }
