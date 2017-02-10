@@ -51,3 +51,5 @@ generateDockerPipeline.with {
   }
  }
 }
+
+queue(generateDockerPipeline)
