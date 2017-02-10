@@ -23,8 +23,6 @@ This cartridge generates the jenkins jobs and pipeline views to -
 * Pull the built image from the registry and deploy it as a container.
 * Manual step allowing you to clean up the deployed containers.
 
-**Note** : The credential parameter used in the jenkins job expects the docker hub credentials to be added to jenkins with ID **docker-credentials**.
-
 # License
 Please view [license information](LICENSE.md) for the software contained on this image.
 
