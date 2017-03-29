@@ -16,7 +16,7 @@ This cartridge generates the jenkins jobs and pipeline views to -
 
 * Performs static code analysis using Dockerlint on the Dockerfile in the Git repository.
 * Builds the Dockerfile in the repository.
-* Performs a vulnerability scan on the built image using Clair [TO-DO]
+* Performs a vulnerability scan on the built image using Anchore Container Scanner plugin.
 * Image testing by analysing the outputs from docker inspect against a known configuration file.
 * Container testing by creating a new testing image internally.
 * Pushes the built and scanned image to a registry.
