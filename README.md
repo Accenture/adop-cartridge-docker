@@ -16,12 +16,19 @@ This cartridge generates the jenkins jobs and pipeline views to -
 
 * Performs static code analysis using Dockerlint on the Dockerfile in the Git repository.
 * Builds the Dockerfile in the repository.
-* Performs a vulnerability scan on the built image using Clair [TO-DO]
+* Performs a vulnerability scan on the built image using Clair
 * Image testing by analysing the outputs from docker inspect against a known configuration file.
 * Container testing by creating a new testing image internally.
 * Pushes the built and scanned image to a registry.
 * Pull the built image from the registry and deploy it as a container.
 * Manual step allowing you to clean up the deployed containers.
+
+# Clair prerequisites
+
+To store vulnerabilities and test docker images again them, following is required:
+
+* Postgres DB.
+* Population of Database with vulnerabilities. Can be done by launching a Clair container: https://github.com/coreos/clair/tree/v1.2.6
 
 # License
 Please view [license information](LICENSE.md) for the software contained on this image.
