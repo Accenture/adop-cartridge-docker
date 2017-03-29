@@ -45,7 +45,7 @@ getDockerfile.with{
     }
     stringParam("IMAGE_REPO",dockerfileGitUrl,"Repository location of your Dockerfile")
     stringParam("IMAGE_TAG",'tomcat8',"Enter a unique string to tag your images (Note: Upper case chararacters are not allowed)")
-    stringParam("CLAIR_DB",'',"URI for the Clair PostgreSQL database in the format postgresql://postgres:password@postgres:5432?sslmode=disable (ignore parameter as it is currently unsupported)")
+    stringParam("CLAIR_DB",'',"URI for the Clair PostgreSQL database in the format postgresql://postgres:password@postgres:5432/dbname?sslmode=disable")
   }
   wrappers {
     preBuildCleanup()
@@ -267,24 +267,44 @@ vulnerabilityScan.with{
           buildNumber('${B}')
       }
     }
-    shell('''set +x
-            |echo "THIS STEP NEEDS TO BE UPDATED ONCE ACCESS TO A PRODUCTION CLAIR DATABASE IS AVAILABLE"
-            |
-            |if [ -z ${CLAIR_DB} ]; then
-            | echo "WARNING: You have not provided the endpoints for a Clair database, moving on for now..."
-            |else
-            | # Set up Clair as a docker container
-            | echo "Clair database endpoint: ${CLAIR_DB}"
-            | mkdir /tmp/clair_config
-            | curl -L https://raw.githubusercontent.com/coreos/clair/master/config.example.yaml -o /tmp/clair_config/config.yaml
-            | # Add the URI for your postgres database
-            | sed -i'' -e "s|options: |options: ${CLAIR_DB}|g" /tmp/clair_config/config.yaml
-            | docker run -d -p 6060-6061:6060-6061 -v /tmp/clair_config:/config quay.io/coreos/clair -config=/config/config.yaml
-            | # INSERT STEPS HERE TO RUN VULNERABILITY ANALYSIS ON IMAGE USING CLAIR API
-            |fi
-            |
-            |echo LOGIN=$(echo ${DOCKER_LOGIN}) > credential.properties
-            |set -x'''.stripMargin())
+    	shell('''#!/bin/bash
+			|set +x
+			|
+			|if [ -z ${CLAIR_DB} ]; then
+			| echo "[WARNING] You have not provided the ClairDB parameter, skipping vulnerability scan..."
+			|else
+			| # Preparing Clair configuration
+			| git clone https://github.com/coreos/clair.git
+			| cd clair
+			| git checkout tags/v1.2.6
+			| sed -i -e "s|source:|source: ${CLAIR_DB}|" config.example.yaml
+			|
+			| # Provisioning Clair container
+			| sed -i -e "s|VOLUME /config|ADD config.example.yaml /config/config.yaml|" Dockerfile
+			| docker build -t clair:v1.2.6 .
+			| docker rm -vf clair
+			| docker run --name clair -d -p 6060-6061:6060-6061 -v /var/run/docker.sock:/var/run/docker.sock clair:v1.2.6 -config=/config/config.yaml
+			|
+			| # Installing docker binaries inside of a Clair container (to get hosts docker image IDs)
+			| docker exec clair bash -c "curl -L https://get.docker.com/builds/Linux/x86_64/docker-17.03.0-ce.tgz -o docker-17.03.0-ce.tgz"
+			| docker exec clair bash -c "tar xzvf docker-17.03.0-ce.tgz"
+			| docker exec clair bash -c "cp docker/* /usr/bin/"
+			|
+			| # Installing Clairs analyze-local-images binary
+			| docker exec clair bash -c "cd /go/src/github.com/coreos/clair/contrib/analyze-local-images; go install"
+			| 
+			| # Getting our docker images ID and scanning it for vulnerabilities
+			| docker exec clair bash -c "analyze-local-images $(docker inspect --format='{{.Id}}' $DOCKERHUB_USERNAME/$IMAGE_TAG:$B)"
+			|
+			| # Cleanup
+			| cd ..
+			| rm -r clair
+			| docker rm -vf clair
+			|fi
+			|
+			|echo LOGIN=$(echo ${DOCKER_LOGIN}) > credential.properties
+			|
+			|set -x'''.stripMargin())
     environmentVariables {
       propertiesFile('credential.properties')
     }
