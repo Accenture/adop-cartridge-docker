@@ -292,7 +292,7 @@ vulnerabilityScan.with{
 			| docker exec clair bash -c "cd /go/src/github.com/coreos/clair/contrib/analyze-local-images; go install"
 			| 
 			| # Getting our docker images ID and scanning it for vulnerabilities
-			| docker exec clair bash -c "analyze-local-images $(docker image inspect --format='{{.Id}}' $DOCKERHUB_USERNAME/$IMAGE_TAG:$B)"
+			| docker exec clair bash -c "analyze-local-images $(docker inspect --format='{{.Id}}' $DOCKERHUB_USERNAME/$IMAGE_TAG:$B)"
 			|
 			| # Cleanup
 			| cd ..
