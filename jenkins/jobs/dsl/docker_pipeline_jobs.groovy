@@ -263,6 +263,8 @@ vulnerabilityScan.with{
             |docker pull anchore/jenkins:latest
 			|echo "$DOCKERHUB_USERNAME/$IMAGE_TAG:$B ${WORKSPACE}/Dockerfile" > anchore_images
 			|
+			|echo LOGIN=$(echo ${DOCKER_LOGIN}) > credential.properties
+			|
             |set -x'''.stripMargin())
     environmentVariables {
       propertiesFile('credential.properties')
