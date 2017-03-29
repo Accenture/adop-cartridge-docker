@@ -44,7 +44,6 @@ getDockerfile.with{
     }
     stringParam("IMAGE_REPO",dockerfileGitUrl,"Repository location of your Dockerfile")
     stringParam("IMAGE_TAG",'tomcat8',"Enter a unique string to tag your images (Note: Upper case chararacters are not allowed)")
-    stringParam("CLAIR_DB",'',"URI for the Clair PostgreSQL database in the format postgresql://postgres:password@postgres:5432?sslmode=disable (ignore parameter as it is currently unsupported)")
   }
   wrappers {
     preBuildCleanup()
@@ -100,7 +99,6 @@ getDockerfile.with{
           predefinedProp("B",'${BUILD_NUMBER}')
           predefinedProp("PARENT_BUILD",'${JOB_NAME}')
           predefinedProp("IMAGE_TAG",'${TAG}')
-          predefinedProp("CLAIR_DB",'${CLAIR_DB}')
           predefinedProp("DOCKER_LOGIN",'${LOGIN}')
         }
       }
@@ -114,7 +112,6 @@ staticCodeAnalysis.with{
     stringParam("B",'',"Parent build number")
     stringParam("PARENT_BUILD","Get_Dockerfile","Parent build name")
     stringParam("IMAGE_TAG",'',"Enter a unique string to tag your images e.g. your enterprise ID (Note: Upper case chararacters are not allowed)")
-    stringParam("CLAIR_DB",'',"URI for the Clair PostgreSQL database in the format postgresql://postgres:password@postgres:5432?sslmode=disable")
     credentialsParam("DOCKER_LOGIN"){
         type('com.cloudbees.plugins.credentials.impl.UsernamePasswordCredentialsImpl')
         required()
@@ -165,7 +162,6 @@ staticCodeAnalysis.with{
           predefinedProp("B",'${B}')
           predefinedProp("PARENT_BUILD", '${PARENT_BUILD}')
           predefinedProp("IMAGE_TAG",'${IMAGE_TAG}')
-          predefinedProp("CLAIR_DB",'${CLAIR_DB}')
           predefinedProp("DOCKER_LOGIN",'${LOGIN}')
         }
       }
@@ -179,7 +175,6 @@ dockerBuild.with{
     stringParam("B",'',"Parent build number")
     stringParam("PARENT_BUILD","Get_Dockerfile","Parent build name")
     stringParam("IMAGE_TAG",'',"Enter a unique string to tag your images e.g. your enterprise ID (Note: Upper case chararacters are not allowed)")
-    stringParam("CLAIR_DB",'',"URI for the Clair PostgreSQL database in the format postgresql://postgres:password@postgres:5432?sslmode=disable")
     credentialsParam("DOCKER_LOGIN"){
         type('com.cloudbees.plugins.credentials.impl.UsernamePasswordCredentialsImpl')
         required()
@@ -224,7 +219,6 @@ dockerBuild.with{
   			  predefinedProp("B",'${B}')
   			  predefinedProp("PARENT_BUILD", '${PARENT_BUILD}')
           predefinedProp("IMAGE_TAG",'${IMAGE_TAG}')
-          predefinedProp("CLAIR_DB",'${CLAIR_DB}')
           predefinedProp("DOCKER_LOGIN",'${LOGIN}')
 			  }
 		  }
@@ -233,12 +227,11 @@ dockerBuild.with{
 }
 
 vulnerabilityScan.with{
-  description("This job tests the image against a database of known vulnerabilities using Clair, an open source static analysis tool https://github.com/coreos/clair. It assumes that Clair has access to the image being tested.")
+  description("This job tests the image with an Anchore Container Scanning plugin, an open source tool https://github.com/jenkinsci/anchore-container-scanner-plugin. It assumes that plugin is enabled in the Jenkins masters configuration and step is added in the job itself.")
   parameters{
     stringParam("B",'',"Parent build number")
     stringParam("PARENT_BUILD","Get_Dockerfile","Parent build name")
     stringParam("IMAGE_TAG",'',"Enter a unique string to tag your images e.g. your enterprise ID (Note: Upper case chararacters are not allowed)")
-    stringParam("CLAIR_DB",'',"URI for the Clair PostgreSQL database in the format postgresql://postgres:password@postgres:5432?sslmode=disable")
     credentialsParam("DOCKER_LOGIN"){
         type('com.cloudbees.plugins.credentials.impl.UsernamePasswordCredentialsImpl')
         required()
@@ -266,22 +259,12 @@ vulnerabilityScan.with{
       }
     }
     shell('''set +x
-            |echo "THIS STEP NEEDS TO BE UPDATED ONCE ACCESS TO A PRODUCTION CLAIR DATABASE IS AVAILABLE"
-            |
-            |if [ -z ${CLAIR_DB} ]; then
-            | echo "WARNING: You have not provided the endpoints for a Clair database, moving on for now..."
-            |else
-            | # Set up Clair as a docker container
-            | echo "Clair database endpoint: ${CLAIR_DB}"
-            | mkdir /tmp/clair_config
-            | curl -L https://raw.githubusercontent.com/coreos/clair/master/config.example.yaml -o /tmp/clair_config/config.yaml
-            | # Add the URI for your postgres database
-            | sed -i'' -e "s|options: |options: ${CLAIR_DB}|g" /tmp/clair_config/config.yaml
-            | docker run -d -p 6060-6061:6060-6061 -v /tmp/clair_config:/config quay.io/coreos/clair -config=/config/config.yaml
-            | # INSERT STEPS HERE TO RUN VULNERABILITY ANALYSIS ON IMAGE USING CLAIR API
-            |fi
-            |
-            |echo LOGIN=$(echo ${DOCKER_LOGIN}) > credential.properties
+			|
+            |docker pull anchore/jenkins:latest
+			|echo "$DOCKERHUB_USERNAME/$IMAGE_TAG:$B ${WORKSPACE}/Dockerfile" > anchore_images
+			|
+			|echo LOGIN=$(echo ${DOCKER_LOGIN}) > credential.properties
+			|
             |set -x'''.stripMargin())
     environmentVariables {
       propertiesFile('credential.properties')
