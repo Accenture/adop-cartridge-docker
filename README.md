@@ -23,7 +23,7 @@ This cartridge generates the jenkins jobs and pipeline views to -
 * Pull the built image from the registry and deploy it as a container.
 * Manual step allowing you to clean up the deployed containers.
 
-# Clair prerequisites
+## Clair prerequisites
 
 To store vulnerabilities and test docker images again them, following is required:
 
