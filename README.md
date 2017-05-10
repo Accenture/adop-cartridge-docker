@@ -12,18 +12,15 @@ Cartridge loads the source code repositories
 
 ## Jenkins Jobs
 
-This cartridge generates the jenkins jobs and pipeline views to -
+This cartridge generates the jenkins jobs to -
 
 * Performs static code analysis using Dockerlint on the Dockerfile in the Git repository.
 * Builds the Dockerfile in the repository.
-* Performs a vulnerability scan on the built image using Clair [Requires Clair Platform Extension](https://github.com/kramos/adop-platform-extension-clair)
-* Image testing by analysing the outputs from docker inspect against a known configuration file.
-* Container testing by creating a new testing image internally.
+* Performs a vulnerability scan on the built image using Anchore Container Scanner plugin.
 * Pushes the built and scanned image to a registry.
-* Pull the built image from the registry and deploy it as a container.
-* Manual step allowing you to clean up the deployed containers.
+  * Supports ECR, DTR and public docker hub.
 
-**Note** : The credential parameter used in the jenkins job expects the docker hub credentials to be added to jenkins with ID **docker-credentials**.
+**Note** : The credential parameter used in the jenkins job expects the docker hub credentials to be added to jenkins with ID **docker-credentials**. For DTR and public docker-credentials is supposed to be username and password whereas if you are using ECR then username is expected to be AWS\_ACCESS\_KEY\_ID and password is expected to be AWS\_SECRET\_ACCESS\_KEY.
 
 # License
 Please view [license information](LICENSE.md) for the software contained on this image.
