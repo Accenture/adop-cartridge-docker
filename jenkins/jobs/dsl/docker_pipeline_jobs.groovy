@@ -8,10 +8,7 @@ def projectFolderName = "${PROJECT_NAME}"
 def projectScmNamespace = "${SCM_NAMESPACE}"
 
 // Variables
-def scmUrl = scmProvider.getScmUrl()
 def dockerfileGitRepo = "adop-cartridge-docker-reference";
-def dockerfileGitUrl = scmUrl + "${PROJECT_NAME}/" + dockerfileGitRepo
-
 
 // Jobs
 def getDockerfile = freeStyleJob(projectFolderName + "/Get_Dockerfile")
@@ -50,7 +47,7 @@ getDockerfile.with{
         defaultValue('docker-credentials')
         description('Dockerhub username and password. Please make sure the credentials are added with ID "docker-credentials"')
     }
-    stringParam("IMAGE_REPO",dockerfileGitUrl,"Repository location of your Dockerfile")
+    stringParam("IMAGE_REPO",dockerfileGitRepo,"Repository location of your Dockerfile")
     stringParam("IMAGE_TAG",'tomcat8',"Enter a unique string to tag your images (Note: Upper case chararacters are not allowed)")
     stringParam("CLAIR_DB",'',"URI for the Clair PostgreSQL database in the format postgresql://postgres:password@postgres:5432?sslmode=disable (ignore parameter as it is currently unsupported)")
   }
@@ -60,15 +57,7 @@ getDockerfile.with{
     maskPasswords()
     sshAgent("adop-jenkins-master")
   }
-  scm{
-    git{
-      remote{
-        url('${IMAGE_REPO}')
-        credentials("adop-jenkins-master")
-      }
-      branch("*/master")
-    }
-  }
+  scm scmProvider.get(projectScmNamespace, dockerfileGitRepo, "*/master", "adop-jenkins-master", null)
   environmentVariables {
       env('WORKSPACE_NAME',workspaceFolderName)
       env('PROJECT_NAME',projectFolderName)
