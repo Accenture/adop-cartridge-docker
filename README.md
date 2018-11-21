@@ -4,6 +4,9 @@ A Cartridge is a set of resources that are loaded into ADOP for a particular pro
 
 This cartridge consists of source code repositories and jenkins jobs for a sample Docker CI pipeline.
 
+## Prerequisites
+ * Make sure [adop-pluggable-scm](https://github.com/Accenture/adop-pluggable-scm) is loaded into your ADOP/C.
+
 ## Source code repositories
 
 Cartridge loads the source code repositories
